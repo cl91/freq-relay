@@ -1,0 +1,49 @@
+/*
+ * timer.c
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#include <stdbool.h>
+#include <stdio.h>
+#include "FreeRTOS/FreeRTOS.h"
+#include "FreeRTOS/semphr.h"
+#include "FreeRTOS/timers.h"
+#include "FreeRTOS/portmacro.h"
+#include "timer.h"
+#include "panic.h"
+
+static xSemaphoreHandle timer_sem;
+static xTimerHandle timer;
+
+// timer expires after 500ms
+#define TIMER_PERIOD	(500 / portTICK_PERIOD_MS)
+
+// forward declaration
+void timer_callback(xTimerHandle);
+
+void init_timer(void)
+{
+	vSemaphoreCreateBinary(timer_sem);
+	if (timer_sem == NULL) {
+		panic("init_timer: unable to create timer semaphore");
+	}
+	timer = xTimerCreate("timer", TIMER_PERIOD, pdFALSE, NULL, timer_callback);
+}
+
+void timer_callback(xTimerHandle timer)
+{
+	signed portBASE_TYPE ignored;
+	xSemaphoreGiveFromISR(timer_sem, &ignored);
+}
+
+bool timer_expired(void)
+{
+	return xSemaphoreTake(timer_sem, 0) == pdTRUE;
+}
+
+void reset_timer(void)
+{
+	xTimerReset(timer, 10);
+}

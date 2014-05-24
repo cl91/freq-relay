@@ -1,0 +1,18 @@
+/*
+ * timer.h
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#ifndef TIMER_H_
+#define TIMER_H_
+
+#include <stdbool.h>
+
+static inline bool timer_expired();
+static inline void reset_timer();
+
+void init_timer();
+
+#endif /* TIMER_H_ */

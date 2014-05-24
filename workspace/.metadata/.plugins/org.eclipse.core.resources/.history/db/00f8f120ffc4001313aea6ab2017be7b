@@ -1,0 +1,26 @@
+/*
+ * timer.c
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#include <stdbool.h>
+#include "FreeRTOS/queue.h"
+#include "FreeRTOS/timers.h"
+#include "timer.h"
+#include "panic.h"
+
+static xQueueHandle timer_queue;
+static TimerHandle_t timer;
+
+#define TIMER_PERIOD	(500 / portTICK_PERIOD_MS)
+
+void init_timer()
+{
+	timer_queue = xQueueCreate(1, sizeof(bool));
+	if (timer_queue == NULL) {
+		panic("init_timer: unable to init timer queue");
+	}
+	timer = xTimerCreate("timer", )
+}

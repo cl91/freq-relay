@@ -1,0 +1,194 @@
+/* vga.c --- graphical interface for the frequency relay
+ * We implement double buffering for flicker-free experience.
+ * However, due to an hardware bug in the board it does not work.
+ */
+
+#include "panic.h"
+#include "system.h"
+#include "altera_avalon_pio_regs.h"
+#include "altera_up_avalon_video_pixel_buffer_dma.h"
+#include "altera_up_avalon_video_character_buffer_with_dma.h"
+#include "FreeRTOS/FreeRTOS.h"
+#include "FreeRTOS/semphr.h"
+#include "FreeRTOS/task.h"
+
+// for frequency plot
+#define FREQPLT_ORI_X 101      	// x axis pixel position at the plot origin
+#define FREQPLT_GRID_SIZE_X 5	// pixel separation in the x axis
+				// between two data points
+#define FREQPLT_ORI_Y 199.0	// y axis pixel position at the plot origin
+#define FREQPLT_FREQ_RES 20.0	// number of pixels per Hz (y axis scale)
+
+#define ROCPLT_ORI_X 101
+#define ROCPLT_GRID_SIZE_X 5
+#define ROCPLT_ORI_Y 259.0
+#define ROCPLT_ROC_RES 0.5     	// number of pixels per Hz/s (y axis scale)
+
+#define MIN_FREQ 45.0		// minimum frequency to draw
+#define NR_POINTS 100		// number of data points
+
+// vga_sem protects access to the array of data to draw to the vga buffer
+static xSemaphoreHandle vga_sem;
+static struct message {
+	double freq;
+	double roc;
+} vga_freq_array[NR_POINTS] = {0};
+static int last = 0;
+
+void post_freq_to_vga_buffer(struct message msg)
+{
+	xSemaphoreTake(vga_sem, portMAX_DELAY);
+	vga_freq_array[last] = msg;
+	last = ++last % NR_POINTS;
+	xSemaphoreGive(vga_sem);
+}
+
+struct threshold {
+	double freq;
+	double roc;
+} get_current_threshold(void);
+
+struct line {
+	unsigned int x1;
+	unsigned int y1;
+	unsigned int x2;
+	unsigned int y2;
+};
+
+// p --- previous, n --- next, j --- index of data points (starts from 0)
+void draw_freq_roc_line(alt_up_pixel_buffer_dma_dev *pixel_buf,
+		struct message p, struct message n, struct threshold th, int j)
+{
+	double freq_p = p.freq;
+	double freq_n = n.freq;
+	double roc_p = p.roc;
+	double roc_n = n.roc;
+	double freq_th = th.freq;
+	double roc_th = th.roc;
+	struct line line_freq, line_roc, line_freq_th, line_roc_upper, line_roc_lower;
+
+	if (((int)(freq_p) > MIN_FREQ) && ((int)(freq_n) > MIN_FREQ)) {
+		// Calculate coordinates of the two data points for which a line is drawn in between
+		// Frequency plot
+		line_freq.x1 = FREQPLT_ORI_X + FREQPLT_GRID_SIZE_X * j;
+		line_freq.y1 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (freq_p - MIN_FREQ));
+
+		line_freq.x2 = FREQPLT_ORI_X + FREQPLT_GRID_SIZE_X * (j + 1);
+		line_freq.y2 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (freq_n - MIN_FREQ));
+
+		// Frequency RoC plot
+		line_roc.x1 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * j;
+		line_roc.y1 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * roc_p);
+
+		line_roc.x2 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * (j + 1);
+		line_roc.y2 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * roc_n);
+
+		// Upper ROC threshold (above 0)
+		line_roc_upper.x1 = ROCPLT_ORI_X;
+		line_roc_upper.y1 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * roc_th);
+
+		line_roc_upper.x2 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * NR_POINTS;
+		line_roc_upper.y2 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * roc_th);
+
+		// Lower ROC threshold (above 0)
+		line_roc_lower.x1 = ROCPLT_ORI_X;
+		line_roc_lower.y1 = (int)(ROCPLT_ORI_Y + ROCPLT_ROC_RES * roc_th);
+
+		line_roc_lower.x2 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * NR_POINTS;
+		line_roc_lower.y2 = (int)(ROCPLT_ORI_Y + ROCPLT_ROC_RES * roc_th);
+
+		//Draw
+		alt_up_pixel_buffer_dma_draw_line(pixel_buf, line_freq.x1, line_freq.y1, line_freq.x2, line_freq.y2, 0x3ff << 0, 0);
+		alt_up_pixel_buffer_dma_draw_line(pixel_buf, line_roc.x1, line_roc.y1, line_roc.x2, line_roc.y2, 0x3ff << 0, 0);
+		alt_up_pixel_buffer_dma_draw_line(pixel_buf, line_roc_upper.x1, line_roc_upper.y1, line_roc_upper.x2, line_roc_upper.y2, 0x3ff << 10, 0);
+		alt_up_pixel_buffer_dma_draw_line(pixel_buf, line_roc_lower.x1, line_roc_lower.y1, line_roc_lower.x2, line_roc_lower.y2, 0x3ff << 10, 0);
+	}
+
+	if ((int) freq_th > MIN_FREQ) {
+		// Frequency Threshold Plot
+		line_freq_th.x1 = FREQPLT_ORI_X;
+		line_freq_th.y1 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (freq_th - MIN_FREQ));
+
+		line_freq_th.x2 = FREQPLT_ORI_X + FREQPLT_GRID_SIZE_X * NR_POINTS;
+		line_freq_th.y2 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (freq_th - MIN_FREQ));
+
+		alt_up_pixel_buffer_dma_draw_line(pixel_buf, line_freq_th.x1, line_freq_th.y1, line_freq_th.x2, line_freq_th.y2, 0x3ff << 10, 0);
+	}
+}
+
+void draw_to_back_buffer(alt_up_pixel_buffer_dma_dev *pixel_buf)
+{
+	alt_up_pixel_buffer_dma_clear_screen(pixel_buf, 1);
+
+	// set up plot axes
+	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 590, 200, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 1);
+	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 590, 300, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 1);
+	alt_up_pixel_buffer_dma_draw_vline(pixel_buf, 100, 50, 200, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 1);
+	alt_up_pixel_buffer_dma_draw_vline(pixel_buf, 100, 220, 300, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 1);
+
+	struct threshold th = get_current_threshold();
+	int i;
+
+	xSemaphoreTake(vga_sem, portMAX_DELAY);
+
+	for (i = 1; i < last; i++) {
+		draw_freq_roc_line(pixel_buf, vga_freq_array[i-1], vga_freq_array[i], th, i-1);
+	}
+
+	xSemaphoreGive(vga_sem);
+}
+
+void draw_characters(alt_up_char_buffer_dev *char_buf)
+{
+	struct threshold th = get_current_threshold();
+	alt_up_char_buffer_string(char_buf, "Frequency(Hz)", 4, 4);
+	alt_up_char_buffer_string(char_buf, "52", 10, 7);
+	alt_up_char_buffer_string(char_buf, "50", 10, 12);
+	alt_up_char_buffer_string(char_buf, "48", 10, 17);
+	alt_up_char_buffer_string(char_buf, "46", 10, 22);
+
+	alt_up_char_buffer_string(char_buf, "df/dt(Hz/s)", 4, 26);
+	alt_up_char_buffer_string(char_buf, "60", 10, 28);
+	alt_up_char_buffer_string(char_buf, "30", 10, 30);
+	alt_up_char_buffer_string(char_buf, "0", 10, 32);
+	alt_up_char_buffer_string(char_buf, "-30", 9, 34);
+	alt_up_char_buffer_string(char_buf, "-60", 9, 36);
+
+	char buf[32];
+	snprintf(buf, sizeof(buf), "Freq: %.2f  Roc: %.2f", th.freq, th.roc);
+	alt_up_char_buffer_string(char_buf, buf, 10, 40);
+}
+
+void vga_task(void *p)
+{
+	// Initialise the VGA controller
+	alt_up_pixel_buffer_dma_dev *pixel_buf;
+	pixel_buf = alt_up_pixel_buffer_dma_open_dev(
+			VIDEO_PIXEL_BUFFER_DMA_NAME);
+	if (pixel_buf == NULL)
+		panic("failed to open pixel buffer");
+	alt_up_pixel_buffer_dma_clear_screen(pixel_buf, 0);
+
+	alt_up_char_buffer_dev *char_buf;
+	char_buf = alt_up_char_buffer_open_dev(
+			"/dev/video_character_buffer_with_dma");
+	if (char_buf == NULL)
+		panic("failed to open char buffer");
+	alt_up_char_buffer_clear(char_buf);
+
+	for (;;) {
+		draw_to_back_buffer(pixel_buf);
+		alt_up_pixel_buffer_dma_swap_buffers(pixel_buf);
+		draw_characters(char_buf);
+		vTaskDelay(100);
+	}
+}
+
+void init_vga(void)
+{
+	vSemaphoreCreateBinary(vga_sem);
+	if (vga_sem == NULL)
+		panic("vSemaphoreCreateBinary failed");
+	xTaskCreate(vga_task, "vga", configMINIMAL_STACK_SIZE,
+		    NULL, tskIDLE_PRIORITY+1, NULL);
+}

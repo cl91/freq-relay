@@ -1,0 +1,30 @@
+/* Standard includes. */
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+
+/* Scheduler includes. */
+#include "FreeRTOS/FreeRTOS.h"
+#include "FreeRTOS/task.h"
+
+// forward declaration
+void init_timer(void);
+void init_freq_init(void);
+void state_machine_task(void *);
+
+// Initialise all subsystems and start the scheduler
+int main(void)
+{
+	init_timer();
+	init_freq_irq();
+
+	/* The RegTest tasks as described at the top of this file. */
+	xTaskCreate( state_machine_task, "state_machine", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY+2, NULL);
+
+	/* Finally start the scheduler. */
+	vTaskStartScheduler();
+
+	/* Will only reach here if there is insufficient heap available to start
+	 the scheduler. */
+	for (;;);
+}

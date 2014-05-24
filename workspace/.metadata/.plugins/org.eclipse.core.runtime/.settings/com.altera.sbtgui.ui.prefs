@@ -1,0 +1,5 @@
+#Wed Apr 16 09:22:46 NZST 2014
+newSoftwareExampleWizardPage.defaultLocation=H\:\\workspace\\hardware_configuration\\software\\freq_relay_proj
+newSoftwareExampleWizardPage.sopcinfoFile=H\:\\workspace\\hardware_configuration\\nios2.sopcinfo
+eclipse.preferences.version=1
+newSoftwareExampleWizardPage2.newBspLocation=H\:\\workspace\\hardware_configuration\\software\\freq_relay_proj_bsp

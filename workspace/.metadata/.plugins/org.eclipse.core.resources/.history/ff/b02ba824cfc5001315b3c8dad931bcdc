@@ -1,0 +1,61 @@
+/*
+ * freq_irq.c
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#include "system.h"
+#include "sys/alt_irq.h"
+
+// forward declaration
+void init_threshold_control(void);
+bool is_off_threshold(double freq, double roc);
+
+// message structure in queue
+struct message {
+	double freq;
+	double roc;
+};
+
+// for passing freq and roc data around
+static xQueueHandle freq_queue;
+
+// must be called from task context
+bool is_network_unstable(void)
+{
+	struct message data;
+	xQueueReceive(freq_queue, &data, portMAX_DELAY);
+	return is_off_threshold(data.freq, data.roc);
+}
+
+void init_freq_irq(void)
+{
+	int i;
+	for (i = 0; i < NR_LOADS; i++) {
+		set_load_on(i);
+	}
+	freq_queue = xQueueCreate(1, sizeof(struct message));
+	if (freq_queue == NULL)
+		panic("freq_irq.c:init_freq_irq  xQueueCreate failed");
+	init_threshold_control();
+	alt_irq_register(FREQUENCY_ANALYSER_IRQ, 0, do_freq_irq);
+}
+
+void do_freq_irq(void)
+{
+	unsigned int new_count = IORD(FREQUENCY_ANALYSER_BASE, 0);	// number of ADC samples
+	static double old_freq = 0;
+	static int old_count = 0;
+	double new_freq = 16000/(double)new_count;
+
+	int ave_count = (new_count + old_count) / 2;	// average number of samples
+	double roc = (new_freq - old_freq) * 16000 / ave_count;		// rate of change
+
+	struct message data = { new_freq, roc };
+	portBASE_TYPE ignored;
+	xQueueSendFromISR(freq_queue, &data, &ignored);
+
+	old_freq = new_freq;
+	old_count = new_count;
+}

@@ -1,0 +1,14 @@
+/*
+ * freq_irq.c
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+bool get_shed_load_trigger(void)
+{
+}
+
+void try_shed_load(void)
+{
+}

@@ -1,0 +1,5 @@
+
+**** Build of configuration Nios II for project hello_freertos ****
+
+make all 
+makefile:234: *** BSP directory does not exist: ../hello_freertos_bsp/.  Stop.

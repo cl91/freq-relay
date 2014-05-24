@@ -1,0 +1,92 @@
+/*
+  load_control.c --- utility functions for managing load states
+  and updating led states
+*/
+
+#include <stdbool.h>
+#include <stdio.h>
+#include "system.h"
+#include "io.h"
+#include "altera_avalon_pio_regs.h"
+#include "FreeRTOS/FreeRTOS.h"
+#include "FreeRTOS/semphr.h"
+
+#define NR_LOADS	8
+
+// array of on/off states of each load
+// on -- true, off -- false
+static bool load_states[NR_LOADS];
+
+static inline void set_load_on(int i)
+{
+	load_states[i] = true;
+}
+
+static inline void set_load_off(int i)
+{
+	load_states[i] = false;
+}
+
+static inline bool is_load_on(int i)
+{
+	return load_states[i];
+}
+
+static inline bool is_load_off(int i)
+{
+	return !is_load_on(i);
+}
+
+static xQueueHandle led_queue;
+static void update_led()
+{
+	unsigned long red = 0, green = 0, bit = 1;
+	int i;
+	for (i = 0; i < NR_LOADS; i++) {
+		red |= is_load_on(i) ? bit : 0;
+		green |= is_load_off(i) ? bit : 0;
+		bit <<= 1;
+	}
+	IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE, green);
+}
+
+void init_load_control()
+{
+	int i;
+	for (i = 0; i < NR_LOADS; i++) {
+		set_load_on(i);
+	}
+	led_queue = xQueueCreate(1, sizeof(unsigned long));
+	if (led_queue == NULL)
+		panic("load_control.c:init_load_control()  xQueueCreate failed");
+}
+
+// try to shed load from the network, one load at a time
+// do nothing if no load is to be shed
+// load sheding is prioritised --- loads with a lower id are shed first
+void try_shed_load(void)
+{
+	int i;
+	for (i = 0; i < NR_LOADS; i++) {
+		if (is_load_on(i)) {
+			set_load_off(i);
+			break;
+		}
+	}
+	update_led();
+}
+
+// try reconnecting load from the network, one at a time
+// do nothing if all loads are connected
+// prioritised --- loads with a higher id are reconnected first
+void try_reconnect(void)
+{
+	int i;
+	for (i = NR_LOADS-1; i >= 0; i--) {
+		if (is_load_off(i)) {
+			set_load_on(i);
+			break;
+		}
+	}
+	update_led();
+}

@@ -1,0 +1,45 @@
+/*
+ * freq_irq.c
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#include "system.h"
+#include "sys/alt_irq.h"
+#include "io.h"
+#include "altera_avalon_pio_regs.h"
+
+#define NR_LOADS	8
+
+static bool load_states[NR_LOADS];		// array of on/off states of each load
+
+bool get_shed_load_trigger(void)
+{
+}
+
+void try_shed_load(void)
+{
+}
+
+void try_reconnect(void)
+{
+}
+
+void init_freq_irq(void)
+{
+	alt_irq_register(FREQUENCY_ANALYSER_IRQ, 0, do_freq_irq);
+}
+
+void do_freq_irq(void){
+	unsigned int new_count = IORD(FREQUENCY_ANALYSER_BASE, 0);	// number of ADC samples
+	static double old_freq = 0;
+	static int old_count = 0;
+	double new_freq = 16000/(double)new_count;
+
+	int ave_count = (new_count + old_count) / 2;	// average number of samples
+	double roc = (new_freq - old_freq) * 16000 / ave_count;		// rate of change
+
+	old_freq = new_freq;
+	old_count = new_count;
+}

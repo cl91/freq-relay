@@ -1,0 +1,104 @@
+/*
+  threshold_control.c --- PS/2 interface to control frequency and ROC threshold
+*/
+
+#include <math.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include "altera_up_avalon_ps2.h"
+#include "altera_up_ps2_keyboard.h"
+#include "FreeRTOS/FreeRTOS.h"
+#include "FreeRTOS/queue.h"
+#include "FreeRTOS/semphr.h"
+#include "FreeRTOS/task.h"
+#include "panic.h"
+
+// threshold_queue is used for communication between PS/2 interrupt
+// and the threshold control task
+static xQueueHandle threshold_queue;
+
+struct threshold {
+	double freq;
+	double roc;
+};
+
+// threshold_sem protects access to current_threshold
+static xSemaphoreHandle threshold_sem;
+static struct threshold current_threshold = {43.7, 10.0};
+
+bool is_off_threshold(double freq, double roc)
+{
+	bool ret = false;
+	xSemaphoreTake(threshold_sem, portMAX_DELAY);
+	if ((freq < current_threshold.freq) ||
+	    (fabs(roc) > current_threshold.roc))
+		ret = true;
+	xSemaphoreGive(threshold_sem);
+	return ret;
+}
+
+void threshold_control_task(void *p)
+{
+	struct threshold new_threshold;
+	for (;;) {
+		xQueueReceive(threshold_queue, &new_threshold, portMAX_DELAY);
+		xSemaphoreTake(threshold_sem, portMAX_DELAY);
+		current_threshold = new_threshold;
+		xSemaphoreGive(threshold_sem);
+	}
+}
+
+void init_threshold_control(void)
+{
+	xTaskHandle task;
+	threshold_queue = xQueueCreate(1, sizeof(struct threshold));
+	if (threshold_queue == NULL)
+		panic("threshold_control.c:init_threshold_control()  xQueueCreate failed");
+	vSemaphoreCreateBinary(threshold_sem);
+	if (threshold_sem == NULL)
+		panic("threshold_control.c:init_threshold_control()  vSemaphoreCreateBinary failed");
+	xTaskCreate(threshold_control_task, "threshold_control", configMINIMAL_STACK_SIZE,
+		    NULL, tskIDLE_PRIORITY+1, &task);
+	alt_up_ps2_dev * ps2_device = alt_up_ps2_open_dev(PS2_NAME);
+
+	  if(ps2_device == NULL){
+	    printf("can't find PS/2 device\n");
+	    return 1;
+	  }
+
+	  alt_up_ps2_clear_fifo (ps2_device) ;
+
+	  alt_irq_register(PS2_IRQ, ps2_device, ps2_isr);
+	  // register the PS/2 interrupt
+	  IOWR_8DIRECT(PS2_BASE,4,1);
+}
+
+void do_keyboard_irq(void *p, alt_u32 id)
+{
+	  char ascii;
+	  int status = 0;
+	  unsigned char key = 0;
+	  KB_CODE_TYPE decode_mode;
+	  status = decode_scancode (context, &decode_mode , &key , &ascii) ;
+	  if ( status == 0 ) //success
+	  {
+	    // print out the result
+	    switch ( decode_mode )
+	    {
+	      case KB_ASCII_MAKE_CODE :
+	        printf ( "ASCII   : %x\n", key ) ;
+	        break ;
+	      case KB_LONG_BINARY_MAKE_CODE :
+	        // do nothing
+	      case KB_BINARY_MAKE_CODE :
+	        printf ( "MAKE CODE : %x\n", key ) ;
+	        break ;
+	      case KB_BREAK_CODE :
+	        // do nothing
+	      default :
+	        printf ( "DEFAULT   : %x\n", key ) ;
+	        break ;
+	    }
+	    IOWR(SEVEN_SEG_BASE,0 ,key);
+	  }
+}

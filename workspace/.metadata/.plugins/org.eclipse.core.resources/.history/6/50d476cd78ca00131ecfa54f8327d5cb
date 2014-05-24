@@ -1,0 +1,128 @@
+/*
+ * state_machine.c
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#include <stdbool.h>
+#include <stdio.h>
+
+// forward declarations
+bool timer_expired(void);
+void reset_timer(void);
+bool is_network_unstable(void);
+bool try_shed_load(void);
+bool try_reconnect(void);
+
+enum states {
+	STATE_STABLE,		// network stable, try detecting instability
+	STATE_RECONNECT,	// network stable enough, try reconnecting load, will go to stable if all connected
+	STATE_SHED_LOAD,	// network unstable, try to shed load,
+						// do nothing if all disconnected, goes to monitor unstable
+	STATE_MONITOR_UNSTABLE,		// network unstable, monitoring network,
+								// will shed load if remains unstable for 0.5sec,
+								// will go to monitor stable if fails to detect instability
+	STATE_MONITOR_STABLE		// network stable, monitoring network, will reconnect if stable for 0.5sec
+								// will go to monitor unstable if detects instability
+};
+
+void state_machine_task(void *arg)
+{
+	enum states state = STATE_STABLE;
+
+	for (;;) {
+		if (is_maintenance()) { // maintenance state --- do nothing
+			continue;
+		}
+		switch (state) {
+		case STATE_STABLE:
+			if (is_network_unstable()) {
+				state = STATE_SHED_LOAD;
+			} else {
+				state = STATE_STABLE;
+			}
+			break;
+		case STATE_RECONNECT:
+			if (try_reconnect()) {
+				reset_timer();
+				state = STATE_MONITOR_STABLE;
+			} else {	// all loads are reconnected, goes to stable state
+				state = STATE_STABLE;
+			}
+			break;
+		case STATE_SHED_LOAD:
+			try_shed_load();
+			reset_timer();
+			state = STATE_MONITOR_UNSTABLE;
+			break;
+		case STATE_MONITOR_UNSTABLE:
+			if (timer_expired()) {
+				reset_timer();
+				state = STATE_SHED_LOAD;
+			} else if (is_network_unstable()) {
+				state = STATE_MONITOR_UNSTABLE;
+			} else {
+				reset_timer();
+				state = STATE_MONITOR_STABLE;
+			}
+			break;
+		case STATE_MONITOR_STABLE:
+			if (timer_expired()) {
+				reset_timer();
+				state = STATE_RECONNECT;
+			} else if (is_network_unstable()) {
+				reset_timer();
+				state = STATE_MONITOR_UNSTABLE;
+			} else {
+				state = STATE_MONITOR_STABLE;
+			}
+			break;
+		}
+	}
+}
+
+
+#include "system.h"						// to use the symbolic names
+#include "altera_avalon_pio_regs.h"		// to use PIO functions
+#include "alt_types.h"					// alt_u32 is a kind of alt_types
+#include "sys/alt_irq.h"				// to register interrupts
+
+static xTaskHandle state_machine_task_handle = NULL;
+
+// first we write our interrupt function
+void button_interrupts_function(void *ignored, alt_u32 id)
+{
+	static bool is_running = true;
+
+	if (state_machine_task_handle != NULL) {
+		if (is_running) {
+			is_running = false;
+			vTaskSuspend(state_machine_task_handle);
+		} else {
+			is_running = true;
+			xTaskResumeFromISR(state_machine_task_handle);
+		}
+	}
+
+	// clears the edge capture register
+	IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7);
+}
+
+void init_button(void)
+{
+	  // clears the edge capture register. Writing 1 to bit clears pending interrupt for corresponding button.
+	  IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7);
+
+	  // enable interrupts for all buttons
+	  IOWR_ALTERA_AVALON_PIO_IRQ_MASK(PUSH_BUTTON_BASE, 0x7);
+
+	  // register the ISR
+	  alt_irq_register(PUSH_BUTTON_IRQ, NULL, button_interrupts_function);
+}
+
+void init_state_machine(void)
+{
+	xTaskCreate(state_machine_task, "state_machine", configMINIMAL_STACK_SIZE, NULL,
+				tskIDLE_PRIORITY+2, &state_machine_task_handle);
+}

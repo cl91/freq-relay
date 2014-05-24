@@ -1,0 +1,27 @@
+/*
+ * freq_irq.c
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#define NR_LOADS	8
+
+static bool load_states[NR_LOADS];		// array of on/off states of each load
+
+bool get_shed_load_trigger(void)
+{
+}
+
+void try_shed_load(void)
+{
+}
+
+void try_reconnect(void)
+{
+}
+
+void init_freq_irq(void)
+{
+	alt_irq_register(FREQUENCY_ANALYSER_IRQ, 0, freq_relay);
+}

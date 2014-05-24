@@ -1,0 +1,63 @@
+/*
+  threshold_control.c --- PS/2 interface to control frequency and ROC threshold
+*/
+
+#include <math.h>
+#include <stdbool.h>
+#include "FreeRTOS/FreeRTOS.h"
+#include "FreeRTOS/queue.h"
+#include "FreeRTOS/semphr.h"
+#include "FreeRTOS/task.h"
+#include "panic.h"
+
+// threshold_queue is used for communication between PS/2 interrupt
+// and the threshold control task
+static xQueueHandle threshold_queue;
+
+struct threshold {
+	double freq;
+	double roc;
+};
+
+// threshold_sem protects access to current_threshold
+static xSemaphoreHandle threshold_sem;
+static struct threshold current_threshold = {43.7, 0.6};
+
+bool is_off_threshold(double freq, double roc)
+{
+	bool ret = false;
+	xSemaphoreTake(threshold_sem, portMAX_DELAY);
+	if ((freq > current_threshold.freq) ||
+	    (fabs(roc) > current_threshold.roc))
+		ret = true;
+	xSemaphoreGive(threshold_sem);
+	return ret;
+}
+
+void threshold_control_task(void *p)
+{
+	struct threshold new_threshold;
+	for (;;) {
+		xQueueReceive(threshold_queue, &new_threshold, portMAX_DELAY);
+		xSemaphoreTake(threshold_sem, portMAX_DELAY);
+		current_threshold = new_threshold;
+		xSemaphoreGive(threshold_sem);
+	}
+}
+
+void init_threshold_control(void)
+{
+	xTaskHandle task;
+	threshold_queue = xQueueCreate(1, sizeof(struct threshold));
+	if (threshold_queue == NULL)
+		panic("threshold_control.c:init_threshold_control()  xQueueCreate failed");
+	vSemaphoreCreateBinary(threshold_sem);
+	if (threshold_sem == NULL)
+		panic("threshold_control.c:init_threshold_control()  vSemaphoreCreateBinary failed");
+	xTaskCreate(threshold_control_task, "threshold_control", configMINIMAL_STACK_SIZE,
+		    NULL, tskIDLE_PRIORITY+1, &task);
+}
+
+void do_ps2_irq(void *p)
+{
+}

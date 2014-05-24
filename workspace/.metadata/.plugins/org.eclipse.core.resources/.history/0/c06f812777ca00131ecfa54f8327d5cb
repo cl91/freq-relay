@@ -1,0 +1,60 @@
+/* Standard includes. */
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+
+/* Scheduler includes. */
+#include "FreeRTOS/FreeRTOS.h"
+#include "FreeRTOS/task.h"
+
+// forward declaration
+void init_timer(void);
+void init_freq_init(void);
+void init_vga(void);
+void state_machine_task(void *);
+
+#include "system.h"						// to use the symbolic names
+#include "altera_avalon_pio_regs.h"		// to use PIO functions
+#include "alt_types.h"					// alt_u32 is a kind of alt_types
+#include "sys/alt_irq.h"				// to register interrupts
+
+static xTaskHandle state_machine_task_handle;
+
+// first we write our interrupt function
+void button_interrupts_function(void *ignored, alt_u32 id)
+{
+	static bool is_running = true;
+
+	// clears the edge capture register
+	IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7);
+}
+
+void init_button(void)
+{
+	  // clears the edge capture register. Writing 1 to bit clears pending interrupt for corresponding button.
+	  IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7);
+
+	  // enable interrupts for all buttons
+	  IOWR_ALTERA_AVALON_PIO_IRQ_MASK(PUSH_BUTTON_BASE, 0x7);
+
+	  // register the ISR
+	  alt_irq_register(PUSH_BUTTON_IRQ, NULL, button_interrupts_function);
+}
+
+// Initialise all subsystems and start the scheduler
+int main(void)
+{
+	init_timer();
+	init_freq_irq();
+	init_vga();
+
+	/* The RegTest tasks as described at the top of this file. */
+	xTaskCreate(state_machine_task, "state_machine", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY+2, NULL);
+
+	/* Finally start the scheduler. */
+	vTaskStartScheduler();
+
+	/* Will only reach here if there is insufficient heap available to start
+	 the scheduler. */
+	for (;;);
+}

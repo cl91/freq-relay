@@ -1,0 +1,18 @@
+/*
+ * timer.h
+ *
+ *  Created on: 16/04/2014
+ *      Author: cliu712
+ */
+
+#ifndef TIMER_H_
+#define TIMER_H_
+
+// timer threshold is 0.5sec
+#define TIMER_THRESHOLD		5
+
+int get_timer();
+void reset_timer();
+
+
+#endif /* TIMER_H_ */
