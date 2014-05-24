@@ -1,7 +1,12 @@
 freq-relay
 ==========
 
-A low-cost frequency relay implemented in a soft-core processor with FreeRTOS.
+A low-cost frequency relay implemented in a soft-core processor with FreeRTOS. Written in C.
+
+What it does?
+=============
+
+The low-cost frequency relay aims to dynamical and intelligently regulate household electricity usage, thus saving energy and minimizing power network instability. 
 
 Directory Structure
 ===================
